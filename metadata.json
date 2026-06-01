@@ -1,0 +1,6 @@
+{
+  "name": "Titanium Camera",
+  "description": "A premium AI camera featuring Gemini computational photography, 64K ultra-resolution upscaling, 20x zoom control, and a specialized Night Vision sensor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

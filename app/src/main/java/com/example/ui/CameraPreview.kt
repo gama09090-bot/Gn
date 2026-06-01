@@ -42,36 +42,45 @@ fun CameraPreview(
         imageCapture.flashMode = flashMode
     }
 
+    var cameraInstance by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
+
     LaunchedEffect(lensFacing) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
-            val cameraProvider = cameraProviderFuture.get()
-            
-            // Preview Use Case
-            val preview = Preview.Builder().build().also {
-                it.setSurfaceProvider(previewView.surfaceProvider)
-            }
-
-            // Selector Setup
-            val cameraSelector = CameraSelector.Builder()
-                .requireLensFacing(lensFacing)
-                .build()
-
             try {
-                cameraProvider.unbindAll()
-                val camera = cameraProvider.bindToLifecycle(
-                    lifecycleOwner,
-                    cameraSelector,
-                    preview,
-                    imageCapture
-                )
+                val cameraProvider = cameraProviderFuture.get()
                 
-                onCameraControlReady(camera.cameraControl, camera.cameraInfo)
-                imageCaptureInstance(imageCapture)
-                
-                // Track baseline zoom info
-                camera.cameraInfo.zoomState.value?.let { state ->
-                    camera.cameraControl.setZoomRatio(zoomRatio.coerceIn(state.minZoomRatio, state.maxZoomRatio))
+                // Preview Use Case
+                val preview = Preview.Builder().build().also {
+                    it.setSurfaceProvider(previewView.surfaceProvider)
+                }
+
+                // Safe Selector with Fallback for virtual devices/headless
+                val requestedSelector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+                val cameraSelector = when {
+                    cameraProvider.hasCamera(requestedSelector) -> requestedSelector
+                    cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA) -> CameraSelector.DEFAULT_BACK_CAMERA
+                    cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) -> CameraSelector.DEFAULT_FRONT_CAMERA
+                    else -> null
+                }
+
+                if (cameraSelector != null) {
+                    cameraProvider.unbindAll()
+                    val camera = cameraProvider.bindToLifecycle(
+                        lifecycleOwner,
+                        cameraSelector,
+                        preview,
+                        imageCapture
+                    )
+                    
+                    cameraInstance = camera
+                    onCameraControlReady(camera.cameraControl, camera.cameraInfo)
+                    imageCaptureInstance(imageCapture)
+                    
+                    // Track baseline zoom info
+                    camera.cameraInfo.zoomState.value?.let { state ->
+                        camera.cameraControl.setZoomRatio(zoomRatio.coerceIn(state.minZoomRatio, state.maxZoomRatio))
+                    }
                 }
             } catch (_: Exception) {
                 // Ignore initialization state issues safely
@@ -79,23 +88,16 @@ fun CameraPreview(
         }, mainExecutor)
     }
 
-    LaunchedEffect(zoomRatio) {
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-        cameraProviderFuture.addListener({
-            try {
-                val cameraProvider = cameraProviderFuture.get()
-                val cameraSelector = CameraSelector.Builder()
-                    .requireLensFacing(lensFacing)
-                    .build()
-                
-                // We just want to query active camera zoom bounds
-                val camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector)
-                camera.cameraInfo.zoomState.value?.let { state ->
-                    val finalVal = zoomRatio.coerceIn(state.minZoomRatio, state.maxZoomRatio)
-                    camera.cameraControl.setZoomRatio(finalVal)
-                }
-            } catch (_: Exception) {}
-        }, mainExecutor)
+    LaunchedEffect(zoomRatio, cameraInstance) {
+        val camera = cameraInstance ?: return@LaunchedEffect
+        try {
+            camera.cameraInfo.zoomState.value?.let { state ->
+                val finalVal = zoomRatio.coerceIn(state.minZoomRatio, state.maxZoomRatio)
+                camera.cameraControl.setZoomRatio(finalVal)
+            }
+        } catch (_: Exception) {
+            // Ignore zoom state update issues safely
+        }
     }
 
     AndroidView(
